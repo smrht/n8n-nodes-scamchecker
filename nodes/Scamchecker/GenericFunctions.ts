@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { NodeApiError } from 'n8n-workflow';
 import type {
 	IDataObject,
@@ -19,55 +17,53 @@ type ApiContext =
 	| ILoadOptionsFunctions
 	| IPollFunctions;
 
-interface JsonRpcError {
-	code?: number;
-	message?: string;
-	data?: { retry_after?: number };
+export interface ScamcheckerCheckPayload {
+	text?: string;
+	url?: string;
 }
 
-interface JsonRpcResponse {
-	error?: JsonRpcError;
-	result?: {
-		isError?: boolean;
-		structuredContent?: IDataObject;
-		content?: Array<{ type?: string; text?: string }>;
-	};
+interface ScamcheckerErrorBody {
+	error?: string;
+	retry_after?: number;
 }
+
+const ERROR_MESSAGES: Record<string, string> = {
+	bad_type: 'The request has an invalid format.',
+	empty: 'Provide a message text or a message URL.',
+	too_long: 'The message text is too long (max 8,000 characters; a URL max 2,048).',
+	too_large: 'The screenshot is larger than 6 MB.',
+	upstream: 'The check failed in Scamchecker. Try again later.',
+	busy: 'Scamchecker reached its daily check limit. Try again tomorrow.',
+};
 
 /**
- * Calls one tool on the Scamchecker MCP endpoint (stateless JSON-RPC 2.0) and
- * returns the structured result of the tool call. The Bearer token on the
- * credential is applied through the generic authenticate config.
+ * Calls the Scamchecker REST API (`POST /api/check`) and returns the check
+ * result. The Bearer token on the credential is applied through the generic
+ * authenticate config; the credential test uses `GET /api/v1/whoami`.
  */
 export async function scamcheckerApiRequest(
 	this: ApiContext,
-	toolName: string,
-	toolArguments: Record<string, unknown> = {},
+	payload: ScamcheckerCheckPayload,
 ): Promise<IDataObject> {
-	let response: JsonRpcResponse;
+	let response: IDataObject;
 	try {
 		response = (await this.helpers.httpRequestWithAuthentication.call(
 			this,
 			'scamcheckerApi',
 			{
 				method: 'POST',
-				url: `${BASE_URL}/mcp`,
+				url: `${BASE_URL}/api/check`,
 				headers: {
 					'Content-Type': 'application/json',
 					Accept: 'application/json',
 				},
-				body: {
-					jsonrpc: '2.0',
-					id: randomUUID(),
-					method: 'tools/call',
-					params: { name: toolName, arguments: toolArguments },
-				},
+				body: payload,
 				json: true,
 			},
-		)) as JsonRpcResponse;
+		)) as IDataObject;
 	} catch (error) {
 		const statusCode = (error as { statusCode?: number }).statusCode;
-		const body = (error as { error?: JsonRpcResponse }).error;
+		const errorBody = (error as { error?: ScamcheckerErrorBody }).error;
 		if (statusCode === 401) {
 			throw new NodeApiError(this.getNode(), {}, {
 				message: 'Invalid or revoked API key',
@@ -75,7 +71,7 @@ export async function scamcheckerApiRequest(
 			});
 		}
 		if (statusCode === 429) {
-			const retryAfter = body?.error?.data?.retry_after;
+			const retryAfter = errorBody?.retry_after;
 			throw new NodeApiError(this.getNode(), {}, {
 				message:
 					typeof retryAfter === 'number' && retryAfter > 0
@@ -85,8 +81,9 @@ export async function scamcheckerApiRequest(
 			});
 		}
 		if (typeof statusCode === 'number') {
+			const reason = errorBody?.error ? ERROR_MESSAGES[errorBody.error] : undefined;
 			throw new NodeApiError(this.getNode(), {}, {
-				message: body?.error?.message ?? `The request to Scamchecker failed (status ${statusCode}).`,
+				message: reason ?? `The request to Scamchecker failed (status ${statusCode}).`,
 			});
 		}
 		throw new NodeApiError(this.getNode(), {
@@ -94,25 +91,10 @@ export async function scamcheckerApiRequest(
 		});
 	}
 
-	if (response.error) {
-		throw new NodeApiError(this.getNode(), {}, {
-			message: response.error.message ?? 'The request to Scamchecker failed.',
-		});
-	}
-
-	const result = response.result ?? {};
-	if (result.isError) {
-		const text = (result.content ?? []).find((entry) => entry.type === 'text')?.text;
-		throw new NodeApiError(this.getNode(), {}, {
-			message: text ?? 'The check failed in Scamchecker.',
-		});
-	}
-
-	const payload = result.structuredContent;
-	if (!payload) {
+	if (!response || typeof response.verdict !== 'string') {
 		throw new NodeApiError(this.getNode(), {}, {
 			message: 'The check returned no result.',
 		});
 	}
-	return payload;
+	return response;
 }

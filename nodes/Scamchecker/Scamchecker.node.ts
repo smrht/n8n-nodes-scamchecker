@@ -65,7 +65,7 @@ export class Scamchecker implements INodeType {
 		icon: { light: 'file:scamchecker.svg', dark: 'file:scamchecker.svg' },
 		group: ['input'],
 		version: 1,
-		subtitle: '={{$parameter["operation"] === "checkMessage" ? "Check Message" : ""}}',
+		subtitle: '={{$parameter["operation"] === "check" ? "Check Message" : ""}}',
 		description: 'Check suspicious messages for signs of fraud via Scamchecker',
 		defaults: {
 			name: 'Scamchecker',
@@ -81,20 +81,39 @@ export class Scamchecker implements INodeType {
 		],
 		properties: [
 			{
+				displayName: 'Resource',
+				name: 'resource',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{
+						name: 'Message',
+						value: 'message',
+						description: 'A suspicious email, SMS, WhatsApp message or link',
+					},
+				],
+				default: 'message',
+			},
+			{
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
 				noDataExpression: true,
 				options: [
 					{
-						name: 'Check Message',
-						value: 'checkMessage',
+						name: 'Check',
+						value: 'check',
 						description:
 							'Check a suspicious email, SMS or WhatsApp message for signs of fraud',
 						action: 'Check a message',
 					},
 				],
-				default: 'checkMessage',
+				default: 'check',
+				displayOptions: {
+					show: {
+						resource: ['message'],
+					},
+				},
 			},
 			{
 				displayName: 'Message Text',
@@ -103,28 +122,37 @@ export class Scamchecker implements INodeType {
 				typeOptions: {
 					rows: 4,
 				},
-				required: true,
 				displayOptions: {
 					show: {
-						operation: ['checkMessage'],
+						resource: ['message'],
+						operation: ['check'],
 					},
 				},
 				default: '',
 				description: 'The suspicious email, SMS or WhatsApp text (max 8,000 characters)',
 			},
 			{
-				displayName: 'Message URL',
-				name: 'messageUrl',
-				type: 'string',
+				displayName: 'Options',
+				name: 'options',
+				type: 'collection',
 				displayOptions: {
 					show: {
-						operation: ['checkMessage'],
+						resource: ['message'],
+						operation: ['check'],
 					},
 				},
-				default: '',
-				placeholder: 'https://...',
-				description:
-					'A link from the message (max 2,048 characters). When set, Scamchecker checks the link itself instead of the message text.',
+				default: {},
+				options: [
+					{
+						displayName: 'Message URL',
+						name: 'messageUrl',
+						type: 'string',
+						default: '',
+						placeholder: 'https://...',
+						description:
+							'A link from the message (max 2,048 characters). When set, Scamchecker checks the link itself instead of the message text.',
+					},
+				],
 			},
 		] as INodeProperties[],
 	};
@@ -135,25 +163,37 @@ export class Scamchecker implements INodeType {
 
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
+				const resource = this.getNodeParameter('resource', itemIndex) as string;
+				if (resource !== 'message') {
+					throw new NodeOperationError(this.getNode(), `Unknown resource: ${resource}`, {
+						itemIndex,
+					});
+				}
 				const operation = this.getNodeParameter('operation', itemIndex) as string;
-				if (operation !== 'checkMessage') {
+				if (operation !== 'check') {
 					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`, {
 						itemIndex,
 					});
 				}
 
-				const toolArguments: Record<string, unknown> = {
-					text: this.getNodeParameter('messageText', itemIndex) as string,
-				};
-				const messageUrl = this.getNodeParameter('messageUrl', itemIndex, '') as string;
-				if (messageUrl !== '') {
-					toolArguments.url = messageUrl;
+				const messageText = (this.getNodeParameter('messageText', itemIndex, '') as string).trim();
+				const options = this.getNodeParameter('options', itemIndex, {}) as IDataObject;
+				const messageUrl = ((options.messageUrl as string | undefined) ?? '').trim();
+
+				if (messageText === '' && messageUrl === '') {
+					throw new NodeOperationError(
+						this.getNode(),
+						'Provide a message text, or set Message URL in Options.',
+						{ itemIndex },
+					);
 				}
+
+				const payload: Record<string, string> =
+					messageUrl !== '' ? { type: 'url', url: messageUrl } : { type: 'text', text: messageText };
 
 				const check = (await scamcheckerApiRequest.call(
 					this,
-					'check_message',
-					toolArguments,
+					payload,
 				)) as unknown as CheckResult;
 
 				returnData.push({ json: flattenCheck(check), pairedItem: { item: itemIndex } });

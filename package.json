@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-scamchecker",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "n8n community node for Scamchecker: check suspicious messages for signs of fraud.",
 	"license": "MIT",
 	"homepage": "https://scamchecker.nl",

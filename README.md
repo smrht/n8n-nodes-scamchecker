@@ -26,10 +26,10 @@ In short: in n8n, go to **Settings → Community Nodes**, select **Install**, an
 
 ### Scamchecker node
 
-**Check Message** checks a suspicious message. Every check costs one of your key's checks.
+The node works on the **Message** resource with the **Check** operation. It calls the Scamchecker REST API (`POST /api/check`) directly; every check costs one of your key's checks.
 
-- **Message Text** (required): the suspicious email, SMS or WhatsApp text.
-- **Message URL** (optional): a link from the message. When set, Scamchecker checks the link itself instead of the message text.
+- **Message Text**: the suspicious email, SMS or WhatsApp text.
+- **Options → Message URL**: a link from the message. When set, Scamchecker checks the link itself instead of the message text. Provide a message text or a message URL — at least one of the two.
 
 The node returns flat fields:
 
